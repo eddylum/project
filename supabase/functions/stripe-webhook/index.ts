@@ -36,53 +36,44 @@ serve(async (req) => {
     console.log("Événement complet:", JSON.stringify(event, null, 2));
 
     switch (event.type) {
-      case 'account.updated':
-      case 'account.application.authorized':
-      case 'capability.updated': {
-        const accountId = event.data.object.account || event.data.object.id;
-        console.log("Traitement pour le compte:", accountId);
-        
-        const account = await stripe.accounts.retrieve(accountId);
-        console.log("Détails du compte Stripe:", JSON.stringify(account, null, 2));
+      case 'account.updated': {
+        const account = event.data.object;
+        console.log("Compte Stripe reçu:", account);
+
+        const userId = account.metadata?.user_id;
+        if (!userId) {
+          throw new Error("ID utilisateur manquant dans les métadonnées");
+        }
 
         const isActive = account.details_submitted && 
                         account.charges_enabled &&
                         account.capabilities?.card_payments === 'active' &&
                         account.capabilities?.transfers === 'active';
 
-        console.log("Vérification du statut:", {
-          details_submitted: account.details_submitted,
-          charges_enabled: account.charges_enabled,
-          card_payments: account.capabilities?.card_payments,
-          transfers: account.capabilities?.transfers,
-          isActive
-        });
-
-        const updateData = {
-          stripe_account_status: isActive ? 'active' : 'pending',
-          stripe_charges_enabled: account.charges_enabled,
-          stripe_payouts_enabled: account.payouts_enabled,
-          stripe_requirements: {
-            ...account.requirements,
-            capabilities: account.capabilities
-          },
-          updated_at: new Date().toISOString()
-        };
-
-        console.log("Données de mise à jour:", updateData);
+        console.log("Mise à jour pour l'utilisateur:", userId, "Statut:", isActive ? 'active' : 'pending');
 
         const { data, error: updateError } = await supabase
           .from('profiles')
-          .update(updateData)
-          .eq('stripe_account_id', account.id)
+          .update({
+            stripe_account_status: isActive ? 'active' : 'pending',
+            stripe_account_id: account.id,
+            stripe_charges_enabled: account.charges_enabled,
+            stripe_payouts_enabled: account.payouts_enabled,
+            stripe_requirements: {
+              ...account.requirements,
+              capabilities: account.capabilities
+            },
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', userId)
           .select();
 
         if (updateError) {
-          console.error("Erreur mise à jour Supabase:", updateError);
+          console.error("Erreur mise à jour:", updateError);
           throw updateError;
         }
 
-        console.log("Mise à jour réussie, nouvelles données:", data);
+        console.log("Profil mis à jour:", data);
         break;
       }
 
@@ -94,26 +85,21 @@ serve(async (req) => {
       JSON.stringify({ 
         received: true,
         event_type: event.type,
-        account_id: event.data.object.account || event.data.object.id
-      }),
-      {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }
-    );
-  } catch (err) {
-    console.error("Erreur complète webhook:", err);
-    console.error("Stack trace:", err.stack);
-    return new Response(
-      JSON.stringify({ 
-        error: err.message,
-        stack: err.stack,
         timestamp: new Date().toISOString()
       }),
       {
         headers: { "Content-Type": "application/json" },
         status: 200,
       }
+    );
+  } catch (error) {
+    console.error("Erreur webhook:", error);
+    return new Response(
+      JSON.stringify({ 
+        error: error.message,
+        timestamp: new Date().toISOString()
+      }),
+      { status: 200 }
     );
   }
 }); 
