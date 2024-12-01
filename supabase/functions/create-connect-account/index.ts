@@ -25,10 +25,8 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  console.log("Début de la requête");
-
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
@@ -37,16 +35,6 @@ serve(async (req) => {
       throw new Error("Non autorisé");
     }
 
-    // Récupérer le body
-    const body = await req.json();
-    console.log("Body reçu:", body);
-
-    const { return_url } = body;
-    if (!return_url) {
-      throw new Error("URL de retour manquante");
-    }
-
-    // Vérifier l'utilisateur
     const { data: { user }, error: authError } = await supabase.auth.getUser(
       authHeader.replace("Bearer ", "")
     );
@@ -55,72 +43,63 @@ serve(async (req) => {
       throw new Error("Utilisateur non authentifié");
     }
 
-    console.log("Utilisateur authentifié:", user.id);
-
-    // Créer le compte Stripe
-    console.log("Création du compte Stripe...");
-    const account = await stripe.accounts.create({
-      type: "express",
-      country: "FR",
-      capabilities: {
-        card_payments: { requested: true },
-        transfers: { requested: true },
-      },
-      business_type: "individual",
-      metadata: {
-        user_id: user.id
-      }
-    });
-
-    console.log("Compte Stripe créé:", account.id);
-
-    // Mettre à jour le profil
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        stripe_account_id: account.id,
-        stripe_account_status: 'pending',
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", user.id)
-      .select();
-
-    if (updateError) {
-      console.error("Erreur mise à jour profil:", updateError);
-      throw updateError;
+    const { return_url } = await req.json();
+    if (!return_url) {
+      throw new Error("URL de retour manquante");
     }
 
-    console.log("Profil mis à jour avec l'ID du compte Stripe");
-
-    // Vérifier que la mise à jour a bien été faite
-    const { data: profile, error: checkError } = await supabase
-      .from("profiles")
-      .select("stripe_account_id, stripe_account_status")
-      .eq("id", user.id)
+    // Créer le compte Stripe s'il n'existe pas déjà
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('stripe_account_id')
+      .eq('id', user.id)
       .single();
 
-    if (checkError) {
-      console.error("Erreur vérification profil:", checkError);
-    } else {
-      console.log("Vérification profil:", profile);
+    let accountId = profile?.stripe_account_id;
+
+    if (!accountId) {
+      const account = await stripe.accounts.create({
+        type: "express",
+        country: "FR",
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+        metadata: {
+          user_id: user.id
+        }
+      });
+
+      accountId = account.id;
+
+      // Mettre à jour le profil immédiatement
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          stripe_account_id: accountId,
+          stripe_account_status: 'pending',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (updateError) {
+        throw updateError;
+      }
     }
 
     // Créer le lien d'onboarding
-    console.log("Création du lien d'onboarding avec return_url:", return_url);
     const accountLink = await stripe.accountLinks.create({
-      account: account.id,
+      account: accountId,
       refresh_url: `${return_url}?refresh=true`,
-      return_url: `${return_url}?setup_return=true`,
+      return_url: `${return_url}?success=true`,
       type: "account_onboarding",
     });
 
-    console.log("Lien d'onboarding créé:", accountLink.url);
-
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
+        success: true,
         url: accountLink.url,
-        accountId: account.id,
-        success: true 
+        account_id: accountId
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -128,16 +107,15 @@ serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error("Erreur complète:", error);
+    console.error("Erreur:", error);
     return new Response(
-      JSON.stringify({ 
-        error: error.message,
+      JSON.stringify({
         success: false,
-        details: error instanceof Error ? error.stack : undefined
+        error: error.message
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
+        status: 400,
       }
     );
   }
