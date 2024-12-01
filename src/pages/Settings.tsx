@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
 import { supabase } from "../lib/supabase";
+import { useLocation } from 'react-router-dom';
 import ProfileSettings from "../components/settings/ProfileSettings";
 import StripeConnect from '../components/stripe/StripeConnect';
 import { useStripeStatus } from '../hooks/useStripeStatus';
@@ -11,12 +12,32 @@ export default function Settings() {
   const user = useAuthStore((state) => state.user);
   const stripeStatus = useStripeStatus(user?.id || '');
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
+    // Gérer le retour de Stripe
+    const handleStripeReturn = async () => {
+      const searchParams = new URLSearchParams(location.search);
+      const setupReturn = searchParams.get('setup_return');
+      const refresh = searchParams.get('refresh');
+
+      if (setupReturn === 'true') {
+        // Attendre un peu pour laisser le webhook mettre à jour le statut
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        toast.success('Configuration Stripe terminée !');
+      } else if (refresh === 'true') {
+        toast.error('La configuration Stripe a été interrompue. Veuillez réessayer.');
+      }
+
+      // Nettoyer l'URL
+      window.history.replaceState({}, '', '/dashboard/settings');
+    };
+
     if (user) {
+      handleStripeReturn();
       setLoading(false);
     }
-  }, [user]);
+  }, [user, location]);
 
   const handleHospitableConnect = async () => {
     try {

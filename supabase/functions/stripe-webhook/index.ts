@@ -15,15 +15,22 @@ serve(async (req) => {
   const signature = req.headers.get("stripe-signature");
   
   try {
+    console.log("Webhook appelé");
+    
     const event = stripe.webhooks.constructEvent(
       await req.text(),
       signature!,
       Deno.env.get('STRIPE_WEBHOOK_SECRET')!
     );
 
+    console.log("Événement reçu:", event.type);
+
     switch (event.type) {
       case 'account.updated': {
         const account = event.data.object;
+        console.log("Mise à jour du compte:", account.id);
+        console.log("Statut:", account.details_submitted ? 'active' : 'pending');
+        
         await supabase
           .from('profiles')
           .update({
@@ -34,6 +41,8 @@ serve(async (req) => {
             updated_at: new Date().toISOString()
           })
           .eq('stripe_account_id', account.id);
+          
+        console.log("Profil mis à jour");
         break;
       }
 
@@ -76,7 +85,7 @@ serve(async (req) => {
       status: 200,
     });
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error("Erreur webhook:", err);
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 400 }
