@@ -3,43 +3,20 @@ import { useAuthStore } from "../store/authStore";
 import { supabase } from "../lib/supabase";
 import ProfileSettings from "../components/settings/ProfileSettings";
 import StripeConnect from '../components/stripe/StripeConnect';
+import { useStripeStatus } from '../hooks/useStripeStatus';
 import toast from 'react-hot-toast';
 import { Building2, CreditCard } from 'lucide-react';
 
 export default function Settings() {
   const user = useAuthStore((state) => state.user);
-  const [stripeStatus, setStripeStatus] = useState<'new' | 'pending' | 'active' | 'error'>('new');
-  const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
+  const stripeStatus = useStripeStatus(user?.id || '');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      loadStripeStatus();
-    }
-  }, [user]);
-
-  const loadStripeStatus = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('stripe_account_id, stripe_account_status')
-        .eq('id', user?.id)
-        .single();
-
-      if (error) throw error;
-
-      if (data) {
-        setStripeAccountId(data.stripe_account_id);
-        setStripeStatus(data.stripe_account_status || 'new');
-      }
-    } catch (error) {
-      console.error('Erreur chargement statut Stripe:', error);
-      toast.error('Erreur lors du chargement du statut Stripe');
-      setStripeStatus('error');
-    } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   const handleHospitableConnect = async () => {
     try {
@@ -54,29 +31,6 @@ export default function Settings() {
     } catch (error) {
       console.error('Erreur connexion Hospitable:', error);
       toast.error('Erreur lors de la connexion à Hospitable');
-    }
-  };
-
-  const handleResetStripe = async () => {
-    try {
-      if (!user) return;
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          stripe_account_id: null,
-          stripe_account_status: 'new'
-        })
-        .eq('id', user.id);
-
-      if (error) throw error;
-
-      // Recharger le statut
-      await loadStripeStatus();
-      toast.success('Configuration Stripe réinitialisée');
-    } catch (error) {
-      console.error('Erreur lors de la réinitialisation:', error);
-      toast.error('Erreur lors de la réinitialisation');
     }
   };
 
@@ -122,15 +76,21 @@ export default function Settings() {
               <CreditCard className="h-8 w-8 text-emerald-600" />
               <div>
                 <p className="text-gray-600">
-                  Connectez votre compte Stripe pour recevoir les paiements
+                  {stripeStatus?.accountStatus === 'active' 
+                    ? 'Votre compte Stripe est connecté et actif'
+                    : 'Connectez votre compte Stripe pour recevoir des paiements'}
                 </p>
+                {stripeStatus?.accountStatus === 'active' && (
+                  <p className="text-sm text-emerald-600 mt-1">
+                    Prêt à recevoir des paiements
+                  </p>
+                )}
               </div>
             </div>
           </div>
           <StripeConnect 
-            status={stripeStatus}
-            accountId={stripeAccountId || undefined}
-            onReset={handleResetStripe}
+            status={stripeStatus?.accountStatus || 'new'}
+            accountId={stripeStatus?.accountId}
           />
         </div>
       </div>
