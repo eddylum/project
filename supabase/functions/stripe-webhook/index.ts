@@ -29,53 +29,19 @@ serve(async (req) => {
       case 'account.updated': {
         const account = event.data.object;
         console.log("Mise à jour du compte:", account.id);
-        console.log("Statut:", account.details_submitted ? 'active' : 'pending');
         
-        await supabase
-          .from('profiles')
-          .update({
-            stripe_account_status: account.details_submitted ? 'active' : 'pending',
-            stripe_charges_enabled: account.charges_enabled,
-            stripe_payouts_enabled: account.payouts_enabled,
-            stripe_requirements: account.requirements,
-            updated_at: new Date().toISOString()
-          })
-          .eq('stripe_account_id', account.id);
-          
-        console.log("Profil mis à jour");
+        await updateAccountStatus(account);
         break;
       }
 
-      case 'account.application.deauthorized': {
-        // L'hôte a déconnecté son compte
-        const account = event.data.object;
-        await supabase
-          .from('profiles')
-          .update({
-            stripe_account_id: null,
-            stripe_account_status: 'disconnected',
-            stripe_charges_enabled: false,
-            stripe_payouts_enabled: false,
-            stripe_requirements: null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('stripe_account_id', account.id);
-        break;
-      }
-
-      case 'account.external_account.created':
-      case 'account.external_account.updated':
-      case 'account.external_account.deleted': {
-        // Mise à jour des informations bancaires
-        const account = await stripe.accounts.retrieve(event.account);
-        await supabase
-          .from('profiles')
-          .update({
-            stripe_payouts_enabled: account.payouts_enabled,
-            stripe_requirements: account.requirements,
-            updated_at: new Date().toISOString()
-          })
-          .eq('stripe_account_id', account.id);
+      case 'capability.updated': {
+        const capability = event.data.object;
+        const accountId = capability.account;
+        console.log("Mise à jour capability pour compte:", accountId);
+        
+        // Récupérer le compte complet pour avoir tous les statuts
+        const account = await stripe.accounts.retrieve(accountId);
+        await updateAccountStatus(account);
         break;
       }
     }
@@ -91,4 +57,37 @@ serve(async (req) => {
       { status: 400 }
     );
   }
-}); 
+});
+
+async function updateAccountStatus(account: any) {
+  console.log("Statut du compte:", {
+    details_submitted: account.details_submitted,
+    charges_enabled: account.charges_enabled,
+    payouts_enabled: account.payouts_enabled,
+    capabilities: account.capabilities
+  });
+
+  // Un compte est considéré comme actif si :
+  // 1. Les détails sont soumis
+  // 2. Les paiements sont activés
+  // 3. La capacité de transfert est active
+  const isActive = account.details_submitted && 
+                  account.charges_enabled &&
+                  account.capabilities?.transfers === 'active';
+
+  await supabase
+    .from('profiles')
+    .update({
+      stripe_account_status: isActive ? 'active' : 'pending',
+      stripe_charges_enabled: account.charges_enabled,
+      stripe_payouts_enabled: account.payouts_enabled,
+      stripe_requirements: {
+        ...account.requirements,
+        capabilities: account.capabilities
+      },
+      updated_at: new Date().toISOString()
+    })
+    .eq('stripe_account_id', account.id);
+
+  console.log("Profil mis à jour avec statut:", isActive ? 'active' : 'pending');
+} 
