@@ -64,12 +64,71 @@ export default function Settings() {
 
   const handleSyncStripe = async () => {
     try {
+      setStripeLoading(true);
       const { error } = await supabase.functions.invoke('sync-stripe-status');
       if (error) throw error;
+      
+      // Forcer un rafraîchissement du statut
+      const { data, error: profileError } = await supabase
+        .from('profiles')
+        .select('stripe_account_status, stripe_account_id')
+        .eq('id', user.id)
+        .single();
+        
+      if (profileError) throw profileError;
+      
       toast.success('Statut Stripe synchronisé');
     } catch (err) {
       console.error('Erreur synchronisation:', err);
       toast.error('Erreur de synchronisation');
+    } finally {
+      setStripeLoading(false);
+    }
+  };
+
+  const handleTestSecrets = async () => {
+    try {
+      // Récupérer le token de session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error("Non authentifié");
+      }
+
+      const { data, error } = await supabase.functions.invoke('test-secrets', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+
+      if (error) throw error;
+      console.log('Test des secrets:', data);
+      toast.success('Test des secrets effectué, voir la console');
+    } catch (err) {
+      console.error('Erreur test secrets:', err);
+      toast.error('Erreur lors du test des secrets');
+    }
+  };
+
+  const handleCheckStripeAccount = async () => {
+    try {
+      if (!stripeStatus?.accountId) {
+        toast.error("Pas de compte Stripe connecté");
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke(
+        'check-stripe-account',
+        {
+          body: { accountId: stripeStatus.accountId }
+        }
+      );
+
+      if (error) throw error;
+      console.log("Statut du compte Stripe:", data);
+      toast.success("Vérification effectuée, voir la console");
+    } catch (err) {
+      console.error("Erreur vérification:", err);
+      toast.error("Erreur lors de la vérification");
     }
   };
 
@@ -147,6 +206,18 @@ export default function Settings() {
               Synchroniser avec Stripe
             </button>
           </div>
+          <button
+            onClick={handleTestSecrets}
+            className="text-sm text-gray-600 hover:text-emerald-600 ml-4"
+          >
+            Tester la configuration
+          </button>
+          <button
+            onClick={handleCheckStripeAccount}
+            className="text-sm text-gray-600 hover:text-emerald-600 ml-4"
+          >
+            Vérifier le compte
+          </button>
         </div>
       </div>
     </div>
