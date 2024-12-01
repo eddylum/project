@@ -1,0 +1,26 @@
+project_id = "nlryvsswbbxdatxvpjni"
+
+[functions]
+[functions.create-checkout]
+verify_jwt = false
+
+[functions.create-connect-account]
+verify_jwt = false
+
+[functions.get-analytics]
+verify_jwt = false
+
+[functions.capture-payment]
+verify_jwt = false
+
+[functions.cancel-payment]
+verify_jwt = false
+
+[functions.hospitable-callback]
+verify_jwt = false
+
+[functions.sync-properties]
+verify_jwt = false
+
+[functions.check-stripe-status]
+verify_jwt = false
