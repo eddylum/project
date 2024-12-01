@@ -23,23 +23,25 @@ serve(async (req) => {
       Deno.env.get('STRIPE_WEBHOOK_SECRET')!
     );
 
-    console.log("Événement reçu:", event.type);
+    console.log("Événement reçu:", event.type, event.data.object);
 
     switch (event.type) {
-      case 'account.updated': {
-        const account = event.data.object;
-        console.log("Mise à jour du compte:", account.id);
+      case 'account.updated':
+      case 'account.application.authorized':
+      case 'capability.updated': {
+        const accountId = event.data.object.account || event.data.object.id;
+        console.log("Mise à jour pour le compte:", accountId);
         
+        // Récupérer le compte complet
+        const account = await stripe.accounts.retrieve(accountId);
         await updateAccountStatus(account);
         break;
       }
 
-      case 'capability.updated': {
-        const capability = event.data.object;
-        const accountId = capability.account;
-        console.log("Mise à jour capability pour compte:", accountId);
+      case 'person.created': {
+        const accountId = event.data.object.account;
+        console.log("Nouvelle personne pour le compte:", accountId);
         
-        // Récupérer le compte complet pour avoir tous les statuts
         const account = await stripe.accounts.retrieve(accountId);
         await updateAccountStatus(account);
         break;
@@ -54,29 +56,27 @@ serve(async (req) => {
     console.error("Erreur webhook:", err);
     return new Response(
       JSON.stringify({ error: err.message }),
-      { status: 400 }
+      { status: 200 }, // Changé à 200 pour éviter les retries inutiles
     );
   }
 });
 
 async function updateAccountStatus(account: any) {
-  console.log("Statut du compte:", {
+  console.log("Mise à jour du statut pour:", account.id, {
     details_submitted: account.details_submitted,
     charges_enabled: account.charges_enabled,
     payouts_enabled: account.payouts_enabled,
     capabilities: account.capabilities
   });
 
-  // Un compte est considéré comme actif si :
-  // 1. Les détails sont soumis
-  // 2. Les paiements sont activés
-  // 3. La capacité de transfert est active
+  // Vérifier si le compte est complètement configuré
   const isActive = account.details_submitted && 
                   account.charges_enabled &&
+                  account.capabilities?.card_payments === 'active' &&
                   account.capabilities?.transfers === 'active';
 
-  await supabase
-    .from('profiles')
+  const { error } = await supabase
+    .from("profiles")
     .update({
       stripe_account_status: isActive ? 'active' : 'pending',
       stripe_charges_enabled: account.charges_enabled,
@@ -89,5 +89,9 @@ async function updateAccountStatus(account: any) {
     })
     .eq('stripe_account_id', account.id);
 
-  console.log("Profil mis à jour avec statut:", isActive ? 'active' : 'pending');
+  if (error) {
+    console.error("Erreur mise à jour profil:", error);
+  } else {
+    console.log("Profil mis à jour avec succès, nouveau statut:", isActive ? 'active' : 'pending');
+  }
 } 

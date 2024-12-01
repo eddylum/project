@@ -13,6 +13,7 @@ export default function Settings() {
   const stripeStatus = useStripeStatus(user?.id || '');
   const [loading, setLoading] = useState(true);
   const location = useLocation();
+  const [stripeLoading, setStripeLoading] = useState(true);
 
   useEffect(() => {
     // Gérer le retour de Stripe
@@ -39,6 +40,12 @@ export default function Settings() {
     }
   }, [user, location]);
 
+  useEffect(() => {
+    if (stripeStatus) {
+      setStripeLoading(false);
+    }
+  }, [stripeStatus]);
+
   const handleHospitableConnect = async () => {
     try {
       const { data, error } = await supabase.functions.invoke('get-hospitable-auth-url', {
@@ -52,6 +59,17 @@ export default function Settings() {
     } catch (error) {
       console.error('Erreur connexion Hospitable:', error);
       toast.error('Erreur lors de la connexion à Hospitable');
+    }
+  };
+
+  const handleSyncStripe = async () => {
+    try {
+      const { error } = await supabase.functions.invoke('sync-stripe-status');
+      if (error) throw error;
+      toast.success('Statut Stripe synchronisé');
+    } catch (err) {
+      console.error('Erreur synchronisation:', err);
+      toast.error('Erreur de synchronisation');
     }
   };
 
@@ -92,27 +110,43 @@ export default function Settings() {
 
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-medium mb-4">Paiements avec Stripe</h2>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-4">
-              <CreditCard className="h-8 w-8 text-emerald-600" />
-              <div>
-                <p className="text-gray-600">
-                  {stripeStatus?.accountStatus === 'active' 
-                    ? 'Votre compte Stripe est connecté et actif'
-                    : 'Connectez votre compte Stripe pour recevoir des paiements'}
-                </p>
-                {stripeStatus?.accountStatus === 'active' && (
-                  <p className="text-sm text-emerald-600 mt-1">
-                    Prêt à recevoir des paiements
-                  </p>
-                )}
-              </div>
+          {stripeLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-4">
+                  <CreditCard className="h-8 w-8 text-emerald-600" />
+                  <div>
+                    <p className="text-gray-600">
+                      {stripeStatus?.accountStatus === 'active' 
+                        ? 'Votre compte Stripe est connecté et actif'
+                        : 'Connectez votre compte Stripe pour recevoir des paiements'}
+                    </p>
+                    {stripeStatus?.accountStatus === 'active' && (
+                      <p className="text-sm text-emerald-600 mt-1">
+                        Prêt à recevoir des paiements
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <StripeConnect 
+                status={stripeStatus?.accountStatus || 'new'}
+                accountId={stripeStatus?.accountId}
+              />
+            </>
+          )}
+          <div className="flex justify-end mb-4">
+            <button
+              onClick={handleSyncStripe}
+              className="text-sm text-gray-600 hover:text-emerald-600"
+            >
+              Synchroniser avec Stripe
+            </button>
           </div>
-          <StripeConnect 
-            status={stripeStatus?.accountStatus || 'new'}
-            accountId={stripeStatus?.accountId}
-          />
         </div>
       </div>
     </div>
