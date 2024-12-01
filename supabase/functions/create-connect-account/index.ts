@@ -32,24 +32,18 @@ serve(async (req) => {
   }
 
   try {
-    // Vérifier l'authentification
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       throw new Error("Non autorisé");
     }
 
-    // Récupérer les données de la requête
+    // Récupérer le body
     const body = await req.json();
     console.log("Body reçu:", body);
 
     const { return_url } = body;
     if (!return_url) {
       throw new Error("URL de retour manquante");
-    }
-
-    // Vérifier HTTPS seulement si l'URL n'est pas localhost
-    if (!return_url.includes('localhost') && !return_url.startsWith('https://')) {
-      throw new Error("L'URL de retour doit être en HTTPS");
     }
 
     // Vérifier l'utilisateur
@@ -61,8 +55,10 @@ serve(async (req) => {
       throw new Error("Utilisateur non authentifié");
     }
 
+    console.log("Utilisateur authentifié:", user.id);
+
+    // Créer le compte Stripe
     console.log("Création du compte Stripe...");
-    // Créer le compte Stripe Connect Express
     const account = await stripe.accounts.create({
       type: "express",
       country: "FR",
@@ -79,16 +75,38 @@ serve(async (req) => {
     console.log("Compte Stripe créé:", account.id);
 
     // Mettre à jour le profil
-    await supabase
+    const { error: updateError } = await supabase
       .from("profiles")
       .update({
         stripe_account_id: account.id,
-        stripe_account_status: "pending"
+        stripe_account_status: 'pending',
+        updated_at: new Date().toISOString()
       })
-      .eq("id", user.id);
+      .eq("id", user.id)
+      .select();
 
-    console.log("Création du lien d'onboarding...");
+    if (updateError) {
+      console.error("Erreur mise à jour profil:", updateError);
+      throw updateError;
+    }
+
+    console.log("Profil mis à jour avec l'ID du compte Stripe");
+
+    // Vérifier que la mise à jour a bien été faite
+    const { data: profile, error: checkError } = await supabase
+      .from("profiles")
+      .select("stripe_account_id, stripe_account_status")
+      .eq("id", user.id)
+      .single();
+
+    if (checkError) {
+      console.error("Erreur vérification profil:", checkError);
+    } else {
+      console.log("Vérification profil:", profile);
+    }
+
     // Créer le lien d'onboarding
+    console.log("Création du lien d'onboarding avec return_url:", return_url);
     const accountLink = await stripe.accountLinks.create({
       account: account.id,
       refresh_url: `${return_url}?refresh=true`,
@@ -98,27 +116,23 @@ serve(async (req) => {
 
     console.log("Lien d'onboarding créé:", accountLink.url);
 
-    const response = {
-      success: true,
-      url: accountLink.url,
-      account_id: account.id
-    };
-
-    console.log("Envoi de la réponse:", response);
-
     return new Response(
-      JSON.stringify(response),
+      JSON.stringify({ 
+        url: accountLink.url,
+        accountId: account.id,
+        success: true 
+      }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       }
     );
   } catch (error) {
-    console.error("Erreur:", error);
+    console.error("Erreur complète:", error);
     return new Response(
       JSON.stringify({ 
-        success: false,
         error: error.message,
+        success: false,
         details: error instanceof Error ? error.stack : undefined
       }),
       {

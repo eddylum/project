@@ -65,18 +65,19 @@ export default function Settings() {
   const handleSyncStripe = async () => {
     try {
       setStripeLoading(true);
-      const { error } = await supabase.functions.invoke('sync-stripe-status');
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error("Non authentifié");
+      }
+
+      const { error } = await supabase.functions.invoke('sync-stripe-status', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+
       if (error) throw error;
-      
-      // Forcer un rafraîchissement du statut
-      const { data, error: profileError } = await supabase
-        .from('profiles')
-        .select('stripe_account_status, stripe_account_id')
-        .eq('id', user.id)
-        .single();
-        
-      if (profileError) throw profileError;
-      
       toast.success('Statut Stripe synchronisé');
     } catch (err) {
       console.error('Erreur synchronisation:', err);
