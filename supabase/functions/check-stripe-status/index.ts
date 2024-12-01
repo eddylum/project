@@ -19,33 +19,42 @@ serve(async (req) => {
   }
 
   try {
-    const { accountId } = await req.json()
+    const { userId } = await req.json();
 
-    if (!accountId) {
-      throw new Error('Account ID is required')
+    // 1. Vérifier dans Supabase
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    console.log("Profil Supabase:", profile);
+
+    if (!profile?.stripe_account_id) {
+      throw new Error("Pas de compte Stripe associé");
     }
 
-    const account = await stripe.accounts.retrieve(accountId)
-    
-    const status = account.details_submitted && 
-                  account.charges_enabled && 
-                  account.payouts_enabled ? 'active' : 'pending'
+    // 2. Vérifier dans Stripe
+    const account = await stripe.accounts.retrieve(profile.stripe_account_id);
+    console.log("Compte Stripe:", account);
 
     return new Response(
-      JSON.stringify({ status }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      }
-    )
+      JSON.stringify({
+        supabase_status: profile,
+        stripe_status: {
+          id: account.id,
+          details_submitted: account.details_submitted,
+          charges_enabled: account.charges_enabled,
+          capabilities: account.capabilities
+        }
+      }),
+      { status: 200 }
+    );
   } catch (error) {
-    console.error('Error:', error)
+    console.error("Erreur:", error);
     return new Response(
       JSON.stringify({ error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      }
-    )
+      { status: 400 }
+    );
   }
 })

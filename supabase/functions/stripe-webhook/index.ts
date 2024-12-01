@@ -15,90 +15,75 @@ const supabase = createClient(
 );
 
 serve(async (req) => {
-  console.log("Webhook appelé - Début du traitement");
-
+  console.log("=== Début du traitement webhook ===");
+  
   try {
     const signature = req.headers.get("stripe-signature");
-    if (!signature) {
-      console.error("Signature Stripe manquante");
-      throw new Error("Signature Stripe manquante");
-    }
-
     const body = await req.text();
-    console.log("Body reçu complet:", body);
+    console.log("Body reçu:", body);
 
     const event = stripe.webhooks.constructEvent(
       body,
-      signature,
+      signature!,
       STRIPE_WEBHOOK_SECRET
     );
 
-    console.log("Événement complet:", JSON.stringify(event, null, 2));
+    const account = event.data.object;
+    const userId = account.metadata?.user_id;
+    
+    console.log("Données compte:", {
+      account_id: account.id,
+      user_id: userId,
+      details_submitted: account.details_submitted,
+      charges_enabled: account.charges_enabled,
+      capabilities: account.capabilities
+    });
 
-    switch (event.type) {
-      case 'account.updated': {
-        const account = event.data.object;
-        console.log("Compte Stripe reçu:", account);
+    // Vérifier d'abord si l'utilisateur existe
+    const { data: existingUser } = await supabase
+      .from('profiles')
+      .select('stripe_account_id, stripe_account_status')
+      .eq('id', userId)
+      .single();
 
-        const userId = account.metadata?.user_id;
-        if (!userId) {
-          throw new Error("ID utilisateur manquant dans les métadonnées");
-        }
+    console.log("Utilisateur existant:", existingUser);
 
-        const isActive = account.details_submitted && 
-                        account.charges_enabled &&
-                        account.capabilities?.card_payments === 'active' &&
-                        account.capabilities?.transfers === 'active';
+    const isActive = account.details_submitted && 
+                    account.charges_enabled &&
+                    account.capabilities?.card_payments === 'active' &&
+                    account.capabilities?.transfers === 'active';
 
-        console.log("Mise à jour pour l'utilisateur:", userId, "Statut:", isActive ? 'active' : 'pending');
+    // Mise à jour avec vérification
+    const { data: updated, error: updateError } = await supabase
+      .from('profiles')
+      .update({
+        stripe_account_id: account.id,
+        stripe_account_status: isActive ? 'active' : 'pending',
+        stripe_charges_enabled: account.charges_enabled,
+        stripe_payouts_enabled: account.payouts_enabled,
+        stripe_requirements: {
+          ...account.requirements,
+          capabilities: account.capabilities
+        },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId)
+      .select()
+      .single();
 
-        const { data, error: updateError } = await supabase
-          .from('profiles')
-          .update({
-            stripe_account_status: isActive ? 'active' : 'pending',
-            stripe_account_id: account.id,
-            stripe_charges_enabled: account.charges_enabled,
-            stripe_payouts_enabled: account.payouts_enabled,
-            stripe_requirements: {
-              ...account.requirements,
-              capabilities: account.capabilities
-            },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', userId)
-          .select();
+    console.log("Résultat mise à jour:", {
+      data: updated,
+      error: updateError
+    });
 
-        if (updateError) {
-          console.error("Erreur mise à jour:", updateError);
-          throw updateError;
-        }
-
-        console.log("Profil mis à jour:", data);
-        break;
-      }
-
-      default:
-        console.log("Type d'événement non géré:", event.type);
-    }
-
-    return new Response(
-      JSON.stringify({ 
-        received: true,
-        event_type: event.type,
-        timestamp: new Date().toISOString()
-      }),
-      {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }
-    );
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
   } catch (error) {
     console.error("Erreur webhook:", error);
     return new Response(
-      JSON.stringify({ 
-        error: error.message,
-        timestamp: new Date().toISOString()
-      }),
+      JSON.stringify({ error: error.message }),
       { status: 200 }
     );
   }
